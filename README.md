@@ -1,3 +1,5 @@
+This is a fork of [json-autotranslate](https://www.npmjs.com/package/json-autotranslate) for my personal use.
+
 # json-autotranslate
 
 This tool allows you to translate a locale folder containing multiple JSON files

@@ -6,7 +6,6 @@ import { flatten, unflatten } from 'flat';
 import * as fs from 'fs';
 import { omit } from 'lodash';
 import * as path from 'path';
-import { diff } from 'deep-object-diff';
 import ncp from 'ncp';
 
 import { serviceMap, TranslationService } from './services';
@@ -491,65 +490,133 @@ function createTranslator(
     sourceFile: TranslatableFile,
     destinationFile: TranslatableFile | undefined,
   ) => {
+    const templateStrings = Object.keys(sourceFile.content);
+    const flattenOptions = { safe: !withArrays };
+    const getStringValue = (
+      obj: Record<string, unknown>,
+      key: string,
+    ): string =>
+      typeof obj[key] === 'string' ? (obj[key] as string) : '';
+
     const cachePath = path.resolve(
       evaluateFilePath(cacheDir, dirStructure, sourceLang),
       sourceFile ? sourceFile.name : '',
     );
-    let cacheDiff: string[] = [];
+
+    let cachedSourceContent: Record<string, unknown> | null = null;
     if (fs.existsSync(cachePath) && !fs.statSync(cachePath).isDirectory()) {
-      const cachedFile = flatten(
-        JSON.parse(fs.readFileSync(cachePath).toString().trim()),
-      ) as any;
-      const cDiff = diff(cachedFile, sourceFile.content);
-      cacheDiff = Object.keys(cDiff).filter((k) => cDiff[k]);
-      const changedItems = Object.keys(cacheDiff).length.toString();
+      const cachedSourceRaw = fs.readFileSync(cachePath).toString().trim();
+      if (cachedSourceRaw.length > 0) {
+        const parsed = JSON.parse(cachedSourceRaw);
+        cachedSourceContent =
+          sourceFile.type === 'key-based'
+            ? (flatten(parsed, flattenOptions) as Record<string, unknown>)
+            : (parsed as Record<string, unknown>);
+      }
+    }
+
+    const sourceContent =
+      sourceFile.type === 'key-based'
+        ? (sourceFile.content as Record<string, unknown>)
+        : (sourceFile.content as Record<string, unknown>);
+
+    const sourceChangedKeys = new Set<string>();
+
+    if (cachedSourceContent) {
+      const cachedKeys = Object.keys(cachedSourceContent);
+      const currentKeys = Object.keys(sourceContent);
+      const allKeys = new Set([...cachedKeys, ...currentKeys]);
+      for (const key of allKeys) {
+        if (cachedSourceContent[key] !== sourceContent[key]) {
+          sourceChangedKeys.add(key);
+        }
+      }
       process.stdout.write(
-        chalk` ({green.bold ${changedItems}} changes from cache)`,
+        chalk` ({green.bold ${String(sourceChangedKeys.size)}} changes from cache)`,
       );
     }
 
-    const existingKeys = destinationFile
-      ? Object.keys(destinationFile.content)
-      : [];
-    const templateStrings = Object.keys(sourceFile.content);
+    const existingTranslations = destinationFile
+      ? (destinationFile.content as Record<string, unknown>)
+      : {};
+
+    const cachedTargetPath = path.resolve(
+      evaluateFilePath(cacheDir, dirStructure, targetLang),
+      destinationFile?.name ?? sourceFile.name,
+    );
+
+    let cachedTranslations: Record<string, unknown> = {};
+
+    if (
+      fs.existsSync(cachedTargetPath) &&
+      !fs.statSync(cachedTargetPath).isDirectory()
+    ) {
+      const cachedTargetRaw = fs.readFileSync(cachedTargetPath).toString().trim();
+      if (cachedTargetRaw.length > 0) {
+        cachedTranslations = JSON.parse(cachedTargetRaw);
+      }
+    }
+
+    const currentTranslations: Record<string, unknown> = {
+      ...cachedTranslations,
+    };
+
+    for (const key of Object.keys(existingTranslations)) {
+      if (!sourceChangedKeys.has(key)) {
+        currentTranslations[key] = existingTranslations[key];
+      }
+    }
+
     const stringsToTranslate = templateStrings
-      .filter(
-        (key) =>
-          overwrite ||
-          !existingKeys.includes(key) ||
-          cacheDiff.includes(key) ||
-          (typeof sourceFile.content[key] == 'string' &&
-            !destinationFile?.content[key]),
-      )
+      .filter((key) => {
+        if (
+          sourceFile.type === 'key-based' &&
+          typeof sourceContent[key] !== 'string'
+        ) {
+          return false;
+        }
+
+        if (overwrite) {
+          return true;
+        }
+
+        if (sourceChangedKeys.has(key)) {
+          return true;
+        }
+
+        return !Object.prototype.hasOwnProperty.call(
+          currentTranslations,
+          key,
+        );
+      })
       .map((key) => ({
         key,
-        value: sourceFile.type === 'key-based' ? sourceFile.content[key] : key,
+        value:
+          sourceFile.type === 'key-based'
+            ? getStringValue(sourceContent, key)
+            : key,
       }));
 
-    const unusedStrings = existingKeys.filter(
+    const translatedStrings =
+      stringsToTranslate.length > 0
+        ? await translationService.translateStrings(
+            stringsToTranslate,
+            sourceLang,
+            targetLang,
+          )
+        : [];
+
+    for (const { key, translated } of translatedStrings) {
+      currentTranslations[key] = translated;
+    }
+
+    const unusedStrings = Object.keys(currentTranslations).filter(
       (key) => !templateStrings.includes(key),
     );
-
-    const translatedStrings = await translationService.translateStrings(
-      stringsToTranslate,
-      sourceLang,
-      targetLang,
-    );
-
-    const newKeys = translatedStrings.reduce(
-      (acc, cur) => ({ ...acc, [cur.key]: cur.translated }),
-      {} as { [k: string]: string },
-    );
-
     if (service !== 'dry-run') {
-      const existingTranslations = destinationFile
-        ? destinationFile.content
-        : {};
-
-      const translatedFile = {
-        ...omit(existingTranslations, deleteUnusedStrings ? unusedStrings : []),
-        ...newKeys,
-      };
+      const translatedFile = deleteUnusedStrings
+        ? omit(currentTranslations, unusedStrings)
+        : currentTranslations;
 
       const newContent =
         JSON.stringify(
@@ -574,7 +641,7 @@ function createTranslator(
         targetLang,
       );
       if (!fs.existsSync(languageCachePath)) {
-        fs.mkdirSync(languageCachePath);
+        fs.mkdirSync(languageCachePath, { recursive: true });
       }
       fs.writeFileSync(
         path.resolve(

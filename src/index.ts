@@ -44,6 +44,14 @@ commander
     'en',
   )
   .option(
+    '--target-languages <targetLanguages>',
+    'specify the target languages, comma separated',
+  )
+  .option(
+    '--skip-languages <skipLanguages>',
+    'specify the languages to skip, comma separated',
+  )
+  .option(
     '-t, --type <key-based|natural|auto>',
     `specify the file structure type`,
     /^(key-based|natural|auto)$/,
@@ -122,11 +130,20 @@ const translate = async (
   appName?: string,
   context?: string,
   overwrite: boolean = false,
+  targetLanguagesOption: string[] = [],
+  skipLanguages: string[] = [],
 ) => {
   const workingDir = path.resolve(process.cwd(), inputDir);
   const resolvedCacheDir = path.resolve(process.cwd(), cacheDir);
   const availableLanguages = getAvailableLanguages(workingDir, dirStructure);
-  const targetLanguages = availableLanguages.filter((f) => f !== sourceLang);
+  const targetLanguages = availableLanguages
+    .filter((f) => f !== sourceLang)
+    .filter((f) => targetLanguagesOption.length > 0 ? targetLanguagesOption.includes(f) : true)
+    .filter((f) => skipLanguages.length > 0 ? !skipLanguages.includes(f) : true);
+
+  if (targetLanguagesOption.length > 0 && targetLanguages.length === 0) {
+    throw new Error(`None of the specified target languages exist.`);
+  }
 
   if (!fs.existsSync(resolvedCacheDir)) {
     fs.mkdirSync(resolvedCacheDir);
@@ -441,6 +458,8 @@ translate(
   commander.appName,
   commander.context,
   commander.overwrite,
+  commander.targetLanguages?.split(','),
+  commander.skipLanguages?.split(','),
 ).catch((e: unknown) => {
   console.log();
   console.log(chalk.bgRed('An error has occurred:'));

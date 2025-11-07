@@ -4,7 +4,7 @@ This is a fork of [json-autotranslate](https://www.npmjs.com/package/json-autotr
 
 This tool allows you to translate a locale folder containing multiple JSON files
 into multiple languages using Google Translate, DeepL (free/pro), Azure
-Translator, Amazon Translate, or manually. You can either use the translation
+Translator, Amazon Translate, OpenAI or manually. You can either use the translation
 keys (natural translation) or their values (key-based translation) as a source
 for translations.
 
@@ -333,6 +333,8 @@ Options:
   --exclude <exclude glob>                       exclude files matching the given glob pattern
   --cache <cacheDir>                             set the cache directory (default: ".json-autotranslate-cache")
   -l, --source-language <sourceLang>             specify the source language (default: "en")
+  --target-languages <targetLanguages>           specify target language(s) (comma separated)
+  --skip-languages <skipLanguages>               specify target language(s) to skip (comma separated)
   -t, --type <key-based|natural|auto>            specify the file structure type (default: "auto")
   -a, --with-arrays                              enables support for arrays in files, but removes support for keys named 0, 1, 2, etc.
   -s, --service <service>                        selects the service to be used for translation (default: "google-translate")
